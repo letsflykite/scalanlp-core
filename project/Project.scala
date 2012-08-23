@@ -9,7 +9,7 @@ import JacocoPlugin._
 
 object BuildSettings {
   val buildOrganization = "org.scalanlp"
-  val buildScalaVersion = "2.9.2"
+  val buildScalaVersion = "2.9.1"
 
   val buildSettings = Defaults.defaultSettings ++ Seq (
     organization := buildOrganization,
@@ -74,6 +74,7 @@ object BreezeBuild extends Build {
       Seq(
         sv match {
           case "2.9.2" => "org.scala-tools.testing" % "scalacheck_2.9.1" % "1.9" % "test"
+          case "2.9.1" => "org.scala-tools.testing" % "scalacheck_2.9.1" % "1.9" % "test"
           case _       => "org.scala-tools.testing" % "scalacheck" % "1.9" % "test"
         },
         "org.scalatest" % "scalatest_2.9.0" % "1.8" % "test",

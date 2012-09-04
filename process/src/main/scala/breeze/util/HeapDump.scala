@@ -2,7 +2,6 @@ package breeze.util
 
 import javax.management.MBeanServer;
 import java.lang.management.ManagementFactory;
-import com.sun.management.HotSpotDiagnosticMXBean
 import java.io.File
 ;
 /**
@@ -17,8 +16,6 @@ object HeapDump  {
   private val HOTSPOT_BEAN_NAME = "com.sun.management:type=HotSpotDiagnostic";
 
   // field to store the hotspot diagnostic MBean
-  @volatile
-  private lazy val hotspotMBean: HotSpotDiagnosticMXBean = getHotspotMBean();
 
   /**
    * Call this method from your application whenever you
@@ -29,18 +26,5 @@ object HeapDump  {
    *             only the live objects
    */
   def dumpHeap(fileName: String, live: Boolean=false) {
-    if(new File(fileName).exists()) new File(fileName).delete;
-    hotspotMBean.dumpHeap(fileName, live);
   }
-
-  // get the hotspot diagnostic MBean from the
-  // platform MBean server
-  private def getHotspotMBean():HotSpotDiagnosticMXBean = {
-    val server = ManagementFactory.getPlatformMBeanServer();
-    val bean =
-      ManagementFactory.newPlatformMXBeanProxy(server,
-        HOTSPOT_BEAN_NAME, classOf[HotSpotDiagnosticMXBean]);
-    bean;
-  }
-
 }

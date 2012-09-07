@@ -36,15 +36,14 @@ import breeze.linalg._
  * @param maxIter: maximum number of iterations, or &lt;= 0 for unlimited
  * @param m: The memory of the search. 3 to 7 is usually sufficient.
  */
-class LBFGS[T](maxIter: Int = -1, m: Int=5)
-              (implicit vspace: MutableCoordinateSpace[T, Double]) extends FirstOrderMinimizer[T,DiffFunction[T]](maxIter) with ConfiguredLogging {
+class LBFGS[T](maxIter: Int = -1, m: Int=10, tolerance: Double=1E-5)
+              (implicit vspace: MutableCoordinateSpace[T, Double]) extends FirstOrderMinimizer[T,DiffFunction[T]](maxIter, tolerance) with ConfiguredLogging {
 
   import vspace._
   require(m > 0)
 
   case class History(private[LBFGS] val memStep: IndexedSeq[T] = IndexedSeq.empty,
-                     private[LBFGS] val memGradDelta: IndexedSeq[T] = IndexedSeq.empty,
-                     private[LBFGS] val memRho: IndexedSeq[Double] = IndexedSeq.empty)
+                     private[LBFGS] val memGradDelta: IndexedSeq[T] = IndexedSeq.empty)
 
 
   protected def takeStep(state: State, dir: T, stepSize: Double) = state.x + dir * stepSize
@@ -53,29 +52,29 @@ class LBFGS[T](maxIter: Int = -1, m: Int=5)
     val grad = state.grad
     val memStep = state.history.memStep
     val memGradDelta = state.history.memGradDelta
-    val memRho = state.history.memRho
     val diag = if(memStep.size > 0) {
-      computeDiag(state.iter,grad,memStep.last,memGradDelta.last)
+      computeDiagScale(memStep.head,memGradDelta.head)
     } else {
-      zeros(grad) + 1.
+      1.0
     }
 
     val dir:T = copy(grad)
     val as = new Array[Double](m)
+    val rho = new Array[Double](m)
 
     for(i <- (memStep.length-1) to 0 by -1) {
-      as(i) = (memStep(i) dot dir)/memRho(i)
+      rho(i) = (memStep(i) dot memGradDelta(i))
+      as(i) = (memStep(i) dot dir)/rho(i)
       if(as(i).isNaN) {
         throw new NaNHistory
       }
-      assert(!as(i).isInfinite, memRho(i) -> norm(grad,2))
       dir -= memGradDelta(i) * as(i)
     }
 
-    dir :*= diag
+    dir *= diag
 
     for(i <- 0 until memStep.length) {
-      val beta = (memGradDelta(i) dot dir)/memRho(i)
+      val beta = (memGradDelta(i) dot dir)/rho(i)
       dir += memStep(i) * (as(i) - beta)
     }
 
@@ -87,45 +86,30 @@ class LBFGS[T](maxIter: Int = -1, m: Int=5)
     val gradDelta : T = (newGrad :- oldState.grad)
     val step:T = (newX - oldState.x)
 
-    var memStep = oldState.history.memStep :+ step
-    var memGradDelta = oldState.history.memGradDelta :+ gradDelta
-    var memRho = oldState.history.memRho :+ (step dot gradDelta)
+    val memStep = (step +: oldState.history.memStep) take m
+    val memGradDelta = (gradDelta +: oldState.history.memGradDelta) take m
 
-    if(memStep.length > m) {
-      memStep = memStep.drop(1)
-      memRho = memRho.drop(1)
-      memGradDelta = memGradDelta.drop(1)
-    }
 
-    new History(memStep,memGradDelta,memRho)
+    new History(memStep,memGradDelta)
   }
 
-  private def computeDiag(iter: Int, grad: T, prevStep: T, prevGrad: T):T = {
-    if(iter == 0) {
-      zeros(grad) + 1.
-    } else {
-      val sy = prevStep dot prevGrad
-      val yy = prevGrad dot prevGrad
-      val syyy = if(sy < 0 || sy.isNaN) {
-        throw new NaNHistory
-      } else {
-        sy/yy
-      }
-     ((zeros(grad) + 1.)* sy/yy)
-    }
+  private def computeDiagScale(prevStep: T, prevGradStep: T):Double = {
+    val sy = prevStep dot prevGradStep
+    val yy = prevGradStep dot prevGradStep
+    if(sy < 0 || sy.isNaN) throw new NaNHistory
+    sy/yy
   }
    
   /**
    * Given a direction, perform a line search to find 
    * a direction to descend. At the moment, this just executes
    * backtracking, so it does not fulfill the wolfe conditions.
-   * 
-   * @param f: The objective
-   * @param dir: The step direction
-   * @param x: The location
-   * @return (stepSize, newValue)
+   *
+   * @param state the current state
+   * @param f The objective
+   * @param dir The step direction
+   * @return stepSize
    */
-
   protected def determineStepSize(state: State, f: DiffFunction[T], dir: T) = {
     val iter = state.iter
     val x = state.x
@@ -145,15 +129,20 @@ class LBFGS[T](maxIter: Int = -1, m: Int=5)
     }
 
     def ff(alpha: Double) = f.valueAt(x + dir * alpha)
-    val search = new BacktrackingLineSearch(cScale = if(iter < 1) 0.01 else 0.5, initAlpha = if (iter < .1) 1/norm(dir) else 1.0)
+    val search = new BacktrackingLineSearch(cScale = if(iter < 1) 0.01 else 0.5, initAlpha = if (iter < 1) 1/norm(dir) else 1.0)
     val iterates = search.iterations(ff)
     val targetState = iterates.find { case search.State(alpha,v) =>
       // sufficient descent
-      val r = v < state.value + alpha * 0.0001 * normGradInDir
-      // I tried using the Wolfe conditions, but it makes the line
-      // search more likely to fail and otherwise rarely changes the
-      // line searcher. Not worth it.
+      var r = v < state.value + alpha * 0.0001 * normGradInDir
+
       if(!r)  log.info(".")
+      // on the first few iterations, don't worry about sufficient slope reduction
+      // since we're trying to build the hessian approximation
+      else if(state.history.memStep.length >= m) {
+        r = math.abs(dir dot f.gradientAt(x + dir * alpha)) <= 0.95 * math.abs(normGradInDir)
+        if(!r) log.info(",")
+      }
+
       r
 
     }

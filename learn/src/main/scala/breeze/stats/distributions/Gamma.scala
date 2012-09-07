@@ -117,6 +117,7 @@ case class Gamma(val shape : Double, val scale : Double)(implicit rand: RandBasi
       }
       x
     } else {
+      // from numpy distributions.c which is Copyright 2005 Robert Kern (robert.kern@gmail.com) under BSD
       val d = shape-1.0/3.0
       val c = 1.0 / math.sqrt(9.0* d)
       var r = 0.0
@@ -127,12 +128,12 @@ case class Gamma(val shape : Double, val scale : Double)(implicit rand: RandBasi
         do {
           x = rand.gaussian(0, 1).draw()
           v = 1.0 + c * x
-        } while(v < 0)
+        } while(v <= 0)
 
         v = v*v*v
         val x2 = x * x
         val u = rand.uniform.draw()
-        if (  (x2 * x2) < 108 * d  *u
+        if (  u < 1.0 - 0.0331 * (x2 * x2)
           || log(u) < 0.5*x2 + d* (1.0 - v+log(v))) {
           r = (scale*d*v)
           ok = true
@@ -166,17 +167,33 @@ object Gamma extends ExponentialFamily[Gamma,Double] {
 
   def sufficientStatisticFor(t: Double) = SufficientStatistic(1,math.log(t),t)
 
-  def mle(stats: SufficientStatistic): (Double, Double) = {
-    val lensed = likelihoodFunction(stats).throughLens[DenseVector[Double]]
-    val lbfgs = new LBFGS[DenseVector[Double]](100,3)
-    // Starting points due to Minka
-    // http://research.microsoft.com/en-us/um/people/minka/papers/minka-gamma.pdf
-    // shockingly good
-    val startingA = .5 / ( math.log(stats.mean) - stats.meanOfLogs)
-    val startingB = stats.mean / startingA
-    val result = lbfgs.minimize(lensed,DenseVector(startingA,startingB))
-    val res@(a,b) = (result(0),result(1))
-    res
+  // change from Timothy Hunter. Thanks!
+  def mle(ss: SufficientStatistic) = {
+    val s = math.log( ss.mean ) - ss.meanOfLogs
+    assert(s > 0 , s) // check concavity
+    val k_approx = approx_k(s)
+    assert(k_approx > 0 , k_approx)
+    val k = Nwt_Rph_iter_for_k(k_approx, s)
+    val theta = ss.mean / (k)
+    (k, theta)
+  }
+  /*
+   * s = log( x_hat) - log_x_hat
+   */
+  def approx_k(s:Double) : Double = {
+    // correct within 1.5%
+    (3 - s + math.sqrt( math.pow((s-3),2) + 24*s )) / (12 * s)
+  }
+
+  def Nwt_Rph_iter_for_k(k:Double, s:Double ): Double = {
+    /*
+     * For a more precise estimate, use Newton-Raphson updates
+     */
+    val k_new = k - (math.log(k) - digamma(k) - s)/( 1.0/k - trigamma(k) )
+    if (math.abs(k - k_new)/math.abs(k_new) < 1.0e-4)
+      k_new
+    else
+      Nwt_Rph_iter_for_k(k_new,s)
   }
 
 

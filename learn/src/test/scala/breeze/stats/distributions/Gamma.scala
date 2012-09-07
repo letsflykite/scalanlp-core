@@ -30,10 +30,8 @@ class GammaTest extends FunSuite with Checkers with MomentsTestBase[Double] with
 
   val expFam = Gamma
 
-  override val numSamples = 30000
+  override val numSamples = 40000
 
-
-  override val VARIANCE_TOLERANCE: Double = 2E-1
 
   implicit def arbParameter = Arbitrary {
     for(shape <- arbitrary[Double].map{_.abs % 200.0 + 0.2}; // Gamma pdf at 0 not defined when shape == 1
@@ -54,6 +52,14 @@ class GammaTest extends FunSuite with Checkers with MomentsTestBase[Double] with
   implicit def arbDistr = Arbitrary {
     for(shape <- arbitrary[Double].map{x => math.abs(x) % 1000.0 + 1.1}; // Gamma pdf at 0 not defined when shape == 1
         scale <- arbitrary[Double].map {x => math.abs(x) % 8.0 + 1.0}) yield new Gamma(shape,scale);
+  }
+
+  test("Issue #11 on github") {
+    val mean = 2.834312
+    val meanOfLogs = -0.689661
+    val n=5.000000
+    val ss = Gamma.SufficientStatistic(n, meanOfLogs, mean)
+    val (k, theta) = Gamma.mle(ss)
   }
 
 
